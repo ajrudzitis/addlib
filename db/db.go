@@ -8,17 +8,17 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
-const createBooksQuery = "CREATE TABLE IF NOT EXISTS books(olid TEXT PRIMARY KEY, isbn13 TEXT, isbn10 TEXT, title TEXT NOT NULL);"
-const createAuthorsQuery = "CREATE TABLE IF NOT EXISTS authors(olid TEXT PRIMARY KEY, name TEXT NOT NULL);"
-const createBookAuthorsQuery = "CREATE TABLE IF NOT EXISTS book_authors(book_olid TEXT, author_olid TEXT, FOREIGN KEY(book_olid) REFERENCES books(olid), FOREIGN KEY(author_olid) REFERENCES authors(olid));"
+const createBooksQuery = "CREATE TABLE IF NOT EXISTS books(id INTEGER PRIMARY KEY AUTOINCREMENT, olid TEXT, isbn13 TEXT, isbn10 TEXT, title TEXT NOT NULL);"
+const createAuthorsQuery = "CREATE TABLE IF NOT EXISTS authors(id INTEGER PRIMARY KEY AUTOINCREMENT, olid TEXT, name TEXT NOT NULL);"
+const createBookAuthorsQuery = "CREATE TABLE IF NOT EXISTS book_authors(book INTEGER, author INTEGER, FOREIGN KEY(book) REFERENCES books(id), FOREIGN KEY(author) REFERENCES authors(id));"
 
 const insertBookQuery = "INSERT INTO books(olid, isbn13, isbn10, title) values (?,?,?,?);"
 const insertAuthorQuery = "INSERT INTO authors(olid, name) values (?,?);"
-const insertBookAuthorQuery = "INSERT INTO book_authors(book_olid, author_olid) values (?,?);"
+const insertBookAuthorQuery = "INSERT INTO book_authors(book, author) values (?,?);"
 
 const readBookByOLIDQuery = "SELECT olid, isbn13, isbn10, title FROM books where olid = ?;"
-const readAuthorByOLIDQuery = "SELECT olid, name FROM authors where olid = ?;"
-const readAuthorsByBookOLIDQuery = "SELECT authors.olid, authors.name FROM authors INNER JOIN book_authors ON authors.olid = book_authors.author_olid WHERE book_authors.book_olid = ?;"
+const readAuthorByOLIDQuery = "SELECT id, olid, name FROM authors where olid = ?;"
+const readAuthorsByBookOLIDQuery = "SELECT authors.olid, authors.name FROM authors INNER JOIN book_authors ON authors.id = book_authors.author WHERE book_authors.book = ?;"
 
 type DB struct {
 	db *sql.DB
@@ -60,10 +60,17 @@ func (d DB) InsertRecord(book openlibrary.Book) error {
 	}
 	defer insertBookStmt.Close()
 
-	_, err = insertBookStmt.Exec(book.OLID, book.GetIsbn13(), book.GetIsbn10(), book.Title)
+	res, err := insertBookStmt.Exec(book.OLID, book.GetIsbn13(), book.GetIsbn10(), book.Title)
 	if err != nil {
 		return fmt.Errorf("db: error inserting book %s: %w", book.OLID, err)
 	}
+	bookId, err := res.LastInsertId()
+	if err != nil {
+		return fmt.Errorf("db: error inserting book %s: %w", book.OLID, err)
+	}
+
+	// map the author OLIDs to the database ids
+	authorOlidToId := map[string]int64{}
 
 	// check if authors exist, insert any missing
 	insertAuthorStmt, err := d.db.Prepare(insertAuthorQuery)
@@ -72,17 +79,23 @@ func (d DB) InsertRecord(book openlibrary.Book) error {
 	}
 	defer insertAuthorStmt.Close()
 	for _, author := range book.Authors {
-		existingAuthor, err := d.readAuthor(author.OLID)
+		existingAuthor, authorId, err := d.readAuthor(author.OLID)
 		if err != nil {
 			return err
 		}
 		if existingAuthor != nil {
+			authorOlidToId[author.OLID] = *authorId
 			continue
 		}
-		_, err = insertAuthorStmt.Exec(author.OLID, author.Name)
+		res, err = insertAuthorStmt.Exec(author.OLID, author.Name)
 		if err != nil {
 			return fmt.Errorf("db: error inserting author %s: %w", author.OLID, err)
 		}
+		newAuthorId, err := res.LastInsertId()
+		if err != nil {
+			return fmt.Errorf("db: error inserting author %s: %w", author.OLID, err)
+		}
+		authorOlidToId[author.OLID] = newAuthorId
 	}
 
 	// add the book/author relationships
@@ -92,7 +105,7 @@ func (d DB) InsertRecord(book openlibrary.Book) error {
 	}
 	defer insertBookAuthorStmt.Close()
 	for _, author := range book.Authors {
-		_, err = insertBookAuthorStmt.Exec(book.OLID, author.OLID)
+		_, err = insertBookAuthorStmt.Exec(bookId, authorOlidToId[author.OLID])
 		if err != nil {
 			return fmt.Errorf("db: error inserting book author %s-%s: %w", book.OLID, author.OLID, err)
 		}
@@ -141,29 +154,30 @@ func (d DB) readBook(olid string) (*openlibrary.Book, error) {
 	return book, nil
 }
 
-func (d DB) readAuthor(olid string) (*openlibrary.Author, error) {
+func (d DB) readAuthor(olid string) (*openlibrary.Author, *int64, error) {
 	stmt, err := d.db.Prepare(readAuthorByOLIDQuery)
 	if err != nil {
-		return nil, fmt.Errorf("db: error preparing statement: %w", err)
+		return nil, nil, fmt.Errorf("db: error preparing statement: %w", err)
 	}
 	defer stmt.Close()
 	row := stmt.QueryRow(olid)
 	if row.Err() != nil {
 		if err == sql.ErrNoRows {
-			return nil, nil
+			return nil, nil, nil
 		}
-		return nil, fmt.Errorf("db: error querying authors: %w", err)
+		return nil, nil, fmt.Errorf("db: error querying authors: %w", err)
 	}
 	author := &openlibrary.Author{}
-	err = row.Scan(&author.OLID, &author.Name)
+	var authorId int64
+	err = row.Scan(&authorId, &author.OLID, &author.Name)
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return nil, nil
+			return nil, nil, nil
 		}
-		return nil, fmt.Errorf("db: error scanning author result: %w", err)
+		return nil, nil, fmt.Errorf("db: error scanning author result: %w", err)
 	}
 
-	return author, nil
+	return author, &authorId, nil
 }
 
 func (d DB) readBookAuthors(bookOLID string) ([]openlibrary.Author, error) {
