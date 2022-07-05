@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/arudzitis/adlib/cmd"
+	"github.com/arudzitis/addlib/cmd"
 )
 
 func main() {

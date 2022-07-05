@@ -7,7 +7,7 @@ import (
 	"os"
 	"regexp"
 
-	openlibrary "github.com/arudzitis/adlib/openlibary"
+	openlibrary "github.com/arudzitis/addlib/openlibary"
 	"github.com/spf13/cobra"
 )
 

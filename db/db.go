@@ -4,7 +4,7 @@ import (
 	"database/sql"
 	"fmt"
 
-	openlibrary "github.com/arudzitis/adlib/openlibary"
+	openlibrary "github.com/arudzitis/addlib/openlibary"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -77,7 +77,7 @@ func (d DB) InsertRecord(book openlibrary.Book) error {
 			return err
 		}
 		if existingAuthor != nil {
-			continue;
+			continue
 		}
 		_, err = insertAuthorStmt.Exec(author.OLID, author.Name)
 		if err != nil {

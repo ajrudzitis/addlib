@@ -1,4 +1,4 @@
-module github.com/arudzitis/adlib
+module github.com/arudzitis/addlib
 
 go 1.18
 

@@ -3,7 +3,7 @@ package cmd
 import (
 	"log"
 
-	"github.com/arudzitis/adlib/db"
+	"github.com/arudzitis/addlib/db"
 	"github.com/spf13/cobra"
 )
 
@@ -12,8 +12,8 @@ var (
 	database     *db.DB
 
 	rootCmd = &cobra.Command{
-		Use:   "adlib",
-		Short: "adlib is tool for managing an inventory of a small library, using data from openlibrary.org",
+		Use:   "addlib",
+		Short: "addlib is tool for managing an inventory of a small library, using data from openlibrary.org",
 	}
 )
 
