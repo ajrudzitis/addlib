@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"fmt"
+	"log"
 
 	openlibrary "github.com/arudzitis/addlib/openlibary"
 	_ "github.com/mattn/go-sqlite3"
@@ -50,6 +51,7 @@ func (d DB) InsertRecord(book openlibrary.Book) error {
 		return err
 	}
 	if existingBook != nil {
+		log.Printf("Book %s already saved.\n", book.Title)
 		return nil
 	}
 
