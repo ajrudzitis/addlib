@@ -13,10 +13,12 @@ import (
 
 var inputFileName string
 var inputFormatName string
+var exceptionFileName string
 
 func init() {
 	importCmd.PersistentFlags().StringVarP(&inputFileName, "input", "i", "", "file to import from")
 	importCmd.PersistentFlags().StringVarP(&inputFormatName, "format", "f", "", `"isbn" or "olid" for openlibrary id`)
+	importCmd.PersistentFlags().StringVarP(&exceptionFileName, "exceptions", "e", "", "file to write lines which were not able to be imported")
 	importCmd.MarkPersistentFlagRequired("input")
 	importCmd.MarkPersistentFlagRequired("format")
 
@@ -36,6 +38,13 @@ func run() {
 	cobra.CheckErr(err)
 	defer func() { _ = inputFile.Close() }()
 
+	var exceptionFile *os.File
+	if exceptionFileName != "" {
+		exceptionFile, err = os.Create(exceptionFileName)
+		cobra.CheckErr(err)
+		defer func() { _ = exceptionFile.Close() }()
+	}
+
 	var handler func(string) error
 
 	switch inputFormatName {
@@ -53,6 +62,10 @@ func run() {
 		err = handler(nextLine)
 		if err != nil {
 			log.Printf("error handling input %q; %v, skipping...", nextLine, err)
+			if exceptionFile != nil {
+				_, err = exceptionFile.Write([]byte(fmt.Sprintf("%s\n", nextLine)))
+				cobra.CheckErr(err)
+			}
 		}
 	}
 }
