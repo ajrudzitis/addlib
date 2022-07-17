@@ -79,7 +79,18 @@ func LookupByISBN(isbn string) (*Book, error) {
 		if err != nil {
 			return nil, err
 		}
-		result.Title = work.Title
+
+		var tentativeTitle string
+		if work.Subtitle != "" {
+			tentativeTitle = fmt.Sprintf("%s: %s", work.Title, work.Subtitle)
+		} else {
+			tentativeTitle = work.Title
+		}
+
+		if len(tentativeTitle) > len(result.Title) {
+			result.Title = tentativeTitle
+		}
+
 		if len(work.Authors) > 0 {
 			authors := []Author{}
 			for _, a := range work.Authors {
@@ -125,8 +136,9 @@ func lookupAuthorByKey(key string) (*Author, error) {
 }
 
 type work struct {
-	Title   string `json:"title"`
-	Authors []struct {
+	Title    string `json:"title"`
+	Subtitle string `json:"subtitle"`
+	Authors  []struct {
 		Author `json:"author"`
 	} `json:"authors"`
 }
