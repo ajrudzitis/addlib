@@ -45,7 +45,7 @@ func run() {
 			authorNames[i] = author.Name
 		}
 
-		_, err = outputFile.Write([]byte(fmt.Sprintf(`%s,"%s","https://openlibrary.org%s"`, book.Title, strings.Join(authorNames, ","), book.OLID)))
+		_, err = outputFile.Write([]byte(fmt.Sprintf(`"%s","%s","https://openlibrary.org%s"`, book.Title, strings.Join(authorNames, ","), book.OLID)))
 		cobra.CheckErr(err)
 		_, err = outputFile.Write([]byte("\n"))
 		cobra.CheckErr(err)
