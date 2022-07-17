@@ -69,7 +69,24 @@ func LookupByISBN(isbn string) (*Book, error) {
 
 	err = json.Unmarshal(responseBody, result)
 	if err != nil {
-		return nil, fmt.Errorf("openlibrary: error unmarshaling response: %w", err)
+		return nil, fmt.Errorf("openlibrary: error unmarshaling isbn response: %w", err)
+	}
+
+	// The quality of title string and authors in the parent work object seems to be better, so use
+	// that if it is present and unambiguous
+	if len(result.Works) == 1 {
+		work, err := lookupWorkByKey(result.Works[0].Key)
+		if err != nil {
+			return nil, err
+		}
+		result.Title = work.Title
+		if len(work.Authors) > 0 {
+			authors := []Author{}
+			for _, a := range work.Authors {
+				authors = append(authors, a.Author)
+			}
+			result.Authors = authors
+		}
 	}
 
 	for i := range result.Authors {
@@ -101,12 +118,39 @@ func lookupAuthorByKey(key string) (*Author, error) {
 
 	err = json.Unmarshal(responseBody, result)
 	if err != nil {
-		return nil, fmt.Errorf("openlibrary: error unmarshaling response: %w", err)
+		return nil, fmt.Errorf("openlibrary: error unmarshaling author response: %w", err)
 	}
 
 	return result, nil
 }
 
 type work struct {
-	Title string `json:"title"`
+	Title   string `json:"title"`
+	Authors []struct {
+		Author `json:"author"`
+	} `json:"authors"`
+}
+
+func lookupWorkByKey(key string) (*work, error) {
+	response, err := http.Get(fmt.Sprintf("https://openlibrary.org/%s.json", key))
+	if err != nil {
+		return nil, fmt.Errorf("openlibrary: error making request: %w", err)
+	}
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("openlibrary: non 200 stats while looking up work: %s", key)
+	}
+
+	result := &work{}
+
+	responseBody, err := ioutil.ReadAll(response.Body)
+	if err != nil {
+		return nil, fmt.Errorf("openlibrary: error reading response: %w", err)
+	}
+
+	err = json.Unmarshal(responseBody, result)
+	if err != nil {
+		return nil, fmt.Errorf("openlibrary: error unmarshaling works response: %w", err)
+	}
+
+	return result, nil
 }

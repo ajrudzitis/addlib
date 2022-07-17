@@ -7,7 +7,7 @@ import (
 	"os"
 	"regexp"
 
-	openlibrary "github.com/arudzitis/addlib/openlibary"
+	"github.com/arudzitis/addlib/openlibrary"
 	"github.com/spf13/cobra"
 )
 
@@ -29,11 +29,11 @@ var importCmd = &cobra.Command{
 	Use:   "import",
 	Short: "import new data into the database",
 	Run: func(cmd *cobra.Command, args []string) {
-		run()
+		runImport()
 	},
 }
 
-func run() {
+func runImport() {
 	inputFile, err := os.Open(inputFileName)
 	cobra.CheckErr(err)
 	defer func() { _ = inputFile.Close() }()
