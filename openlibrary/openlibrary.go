@@ -10,17 +10,6 @@ import (
 
 const isbnSeparator = ","
 
-type Book struct {
-	OLID    string   `json:"key"`
-	Title   string   `json:"title"`
-	Isbn10  []string `json:"isbn_10"`
-	Isbn13  []string `json:"isbn_13"`
-	Authors []Author `json:"authors"`
-	Works   []struct {
-		Key string `json:"key"`
-	} `json:"works"`
-}
-
 func (b *Book) GetIsbn13() *string {
 	if len(b.Isbn13) == 0 {
 		return nil
@@ -43,11 +32,6 @@ func (b *Book) SetIsbn13(input string) {
 
 func (b *Book) SetIsbn10(input string) {
 	b.Isbn10 = strings.Split(input, isbnSeparator)
-}
-
-type Author struct {
-	OLID string `json:"key"`
-	Name string `json:"name"`
 }
 
 func LookupByISBN(isbn string) (*Book, error) {

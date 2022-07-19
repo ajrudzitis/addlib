@@ -1,51 +1,52 @@
 package db
 
 import (
-	"database/sql"
+	"errors"
 	"fmt"
 	"log"
+	"os"
 
 	"github.com/arudzitis/addlib/openlibrary"
-	_ "github.com/mattn/go-sqlite3"
+
+	"gorm.io/driver/sqlite"
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
-
-const createBooksQuery = "CREATE TABLE IF NOT EXISTS books(id INTEGER PRIMARY KEY AUTOINCREMENT, olid TEXT, isbn13 TEXT, isbn10 TEXT, title TEXT NOT NULL, override_title TEXT);"
-const createAuthorsQuery = "CREATE TABLE IF NOT EXISTS authors(id INTEGER PRIMARY KEY AUTOINCREMENT, olid TEXT, name TEXT NOT NULL);"
-const createBookAuthorsQuery = "CREATE TABLE IF NOT EXISTS book_authors(book INTEGER, author INTEGER, FOREIGN KEY(book) REFERENCES books(id), FOREIGN KEY(author) REFERENCES authors(id));"
-
-const insertBookQuery = "INSERT INTO books(olid, isbn13, isbn10, title) values (?,?,?,?);"
-const insertAuthorQuery = "INSERT INTO authors(olid, name) values (?,?);"
-const insertBookAuthorQuery = "INSERT INTO book_authors(book, author) values (?,?);"
-
-const readBookByOLIDQuery = "SELECT olid, isbn13, isbn10, title FROM books where olid = ?;"
-const readAuthorByOLIDQuery = "SELECT id, olid, name FROM authors where olid = ?;"
-const readAuthorsByBookOLIDQuery = "SELECT authors.olid, authors.name FROM authors INNER JOIN book_authors ON authors.id = book_authors.author WHERE book_authors.book = ?;"
-
-const readAllBooksQuery = "SELECT id, olid, isbn13, isbn10, title, override_title FROM books;"
 
 const updateBookOverrideTitle = "UPDATE books SET override_title = ? WHERE olid = ?;"
 
 type DB struct {
-	db *sql.DB
+	db *gorm.DB
 }
 
-func (d DB) Close() {
-	d.db.Close()
-}
+func OpenDatabase(databasePath string, verbose bool) (*DB, error) {
+	config := &gorm.Config{}
 
-func OpenDatabase(databasePath string) (*DB, error) {
-	db, err := sql.Open("sqlite3", databasePath)
+	if verbose {
+		config.Logger = logger.New(
+			log.New(os.Stdout, "\r\n", log.LstdFlags), // io writer
+			logger.Config{
+				LogLevel:                  logger.Info,
+				IgnoreRecordNotFoundError: false,
+				Colorful:                  true,
+			},
+		)
+	}
+
+	db, err := gorm.Open(sqlite.Open(databasePath), config)
 	if err != nil {
 		return nil, fmt.Errorf("db: error opening database: %w", err)
 	}
 
-	for _, query := range []string{createBooksQuery, createAuthorsQuery, createBookAuthorsQuery} {
-		_, err = db.Exec(query)
-		if err != nil {
-			return nil, fmt.Errorf("db: error initializing database with statement: %s: %w", query, err)
-		}
-	}
 	return &DB{db: db}, nil
+}
+
+func (d DB) Migrate() error {
+	err := d.db.AutoMigrate(&Book{}, &Author{}, &BookAuthor{})
+	if err != nil {
+		return fmt.Errorf("db: error updating database file: %w", err)
+	}
+	return nil
 }
 
 func (d DB) InsertRecord(book openlibrary.Book) error {
@@ -59,223 +60,134 @@ func (d DB) InsertRecord(book openlibrary.Book) error {
 		return nil
 	}
 
-	// insert the book
-	insertBookStmt, err := d.db.Prepare(insertBookQuery)
-	if err != nil {
-		return err
-	}
-	defer insertBookStmt.Close()
-
-	res, err := insertBookStmt.Exec(book.OLID, book.GetIsbn13(), book.GetIsbn10(), book.Title)
-	if err != nil {
-		return fmt.Errorf("db: error inserting book %s: %w", book.OLID, err)
-	}
-	bookId, err := res.LastInsertId()
-	if err != nil {
-		return fmt.Errorf("db: error inserting book %s: %w", book.OLID, err)
-	}
-
-	// map the author OLIDs to the database ids
-	authorOlidToId := map[string]int64{}
-
-	// check if authors exist, insert any missing
-	insertAuthorStmt, err := d.db.Prepare(insertAuthorQuery)
-	if err != nil {
-		return err
-	}
-	defer insertAuthorStmt.Close()
+	// prepare the object for insertion
+	ormAuthors := []Author{}
 	for _, author := range book.Authors {
-		existingAuthor, authorId, err := d.readAuthor(author.OLID)
+		ormAuthor, err := d.readAuthor(author.OLID)
 		if err != nil {
 			return err
 		}
-		if existingAuthor != nil {
-			authorOlidToId[author.OLID] = *authorId
-			continue
+
+		if ormAuthor == nil {
+			ormAuthor = &Author{
+				OLID: author.OLID,
+				Name: author.Name,
+			}
 		}
-		res, err = insertAuthorStmt.Exec(author.OLID, author.Name)
-		if err != nil {
-			return fmt.Errorf("db: error inserting author %s: %w", author.OLID, err)
-		}
-		newAuthorId, err := res.LastInsertId()
-		if err != nil {
-			return fmt.Errorf("db: error inserting author %s: %w", author.OLID, err)
-		}
-		authorOlidToId[author.OLID] = newAuthorId
+
+		ormAuthors = append(ormAuthors, *ormAuthor)
 	}
 
-	// add the book/author relationships
-	insertBookAuthorStmt, err := d.db.Prepare(insertBookAuthorQuery)
-	if err != nil {
-		return err
+	ormBook := &Book{
+		ISBN10:  book.GetIsbn10(),
+		ISBN13:  book.GetIsbn13(),
+		OLID:    book.OLID,
+		Authors: ormAuthors,
+		Title:   book.Title,
 	}
-	defer insertBookAuthorStmt.Close()
-	for _, author := range book.Authors {
-		_, err = insertBookAuthorStmt.Exec(bookId, authorOlidToId[author.OLID])
-		if err != nil {
-			return fmt.Errorf("db: error inserting book author %s-%s: %w", book.OLID, author.OLID, err)
-		}
+
+	tx := d.db.Create(&ormBook)
+	if tx.Error != nil {
+		return fmt.Errorf("db: error creating book: %w", tx.Error)
 	}
+	tx = d.db.Save(&ormBook)
+	if tx.Error != nil {
+		return fmt.Errorf("db: error saving book: %w", tx.Error)
+	}
+
 	return nil
 }
 
 func (d DB) UpdateTitle(book openlibrary.Book, title string) error {
-	stmt, err := d.db.Prepare(updateBookOverrideTitle)
-	if err != nil {
-		return fmt.Errorf("db: error preparing statement: %w", err)
+	tx := d.db.Model(&Book{}).Where("olid = ?", book.OLID).Update("title", title)
+	if tx.Error != nil {
+		return fmt.Errorf("db: error updating book title: %w", tx.Error)
 	}
-	defer stmt.Close()
+	book.Title = title
 
-	_, err = stmt.Exec(book.OLID, title)
-	if err != nil {
-		return fmt.Errorf("db: error overriding title: %w", err)
-	}
 	return nil
 }
 
 func (d DB) AllBooks() ([]openlibrary.Book, error) {
-	stmt, err := d.db.Prepare(readAllBooksQuery)
-	if err != nil {
-		return nil, fmt.Errorf("db: error preparing statement: %w", err)
-	}
-	defer stmt.Close()
-
-	rows, err := stmt.Query()
-	if err != nil {
-		return nil, fmt.Errorf("db: error reading all books: %w", err)
+	ormBooks := []Book{}
+	tx := d.db.Model(&Book{}).Preload("Authors").Find(&ormBooks)
+	if tx.Error != nil {
+		return nil, fmt.Errorf("db: error reading all books: %w", tx.Error)
 	}
 
 	books := []openlibrary.Book{}
-	for {
-		if rows.Next() {
-
-			var bookId int64
-			book := openlibrary.Book{}
-			overrideTitle := sql.NullString{}
-			isbn13 := sql.NullString{}
-			isbn10 := sql.NullString{}
-			err = rows.Scan(&bookId, &book.OLID, &isbn13, &isbn10, &book.Title, &overrideTitle)
-			if err != nil {
-				return nil, fmt.Errorf("db: error reading book: %w", err)
-			}
-
-			if isbn13.Valid {
-				book.SetIsbn13(isbn13.String)
-			}
-
-			if isbn10.Valid {
-				book.SetIsbn10(isbn10.String)
-			}
-
-			if overrideTitle.Valid {
-				book.Title = overrideTitle.String
-			}
-
-			book.Authors, err = d.readBookAuthors(bookId)
-			if err != nil {
-				return nil, fmt.Errorf("db: error reading authors associated with book: %w", err)
-			}
-
-			books = append(books, book)
-		} else {
-			if rows.Err() != nil {
-				return nil, fmt.Errorf("db: error reading all books: %w", err)
-			}
-			break
+	for _, ormBook := range ormBooks {
+		ormAuthors, err := d.readAuthors(&ormBook)
+		if err != nil {
+			return nil, err
 		}
+		authors := []openlibrary.Author{}
+		for _, ormAuthor := range ormAuthors {
+			author := openlibrary.Author{
+				Name: ormAuthor.Name,
+				OLID: ormAuthor.OLID,
+			}
+			authors = append(authors, author)
+		}
+
+		book := openlibrary.Book{
+			Title:   ormBook.Title,
+			Authors: authors,
+			OLID:    ormBook.OLID,
+		}
+
+		if ormBook.ISBN10 != nil {
+			book.SetIsbn10(*ormBook.ISBN10)
+		}
+
+		if ormBook.ISBN13 != nil {
+			book.SetIsbn13(*ormBook.ISBN13)
+		}
+
+		books = append(books, book)
 	}
 
 	return books, nil
 }
 
-func (d DB) readBook(olid string) (*openlibrary.Book, error) {
-	stmt, err := d.db.Prepare(readBookByOLIDQuery)
-	if err != nil {
-		return nil, fmt.Errorf("db: error preparing statement: %w", err)
-	}
-	defer stmt.Close()
-	row := stmt.QueryRow(olid)
-	if row.Err() != nil {
-		if err == sql.ErrNoRows {
+func (d DB) readBook(olid string) (*Book, error) {
+	book := Book{}
+	tx := d.db.Find(&book, "olid = ?", olid)
+	if tx.Error != nil {
+		if errors.Is(tx.Error, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("db: error querying books: %w", err)
+		return nil, tx.Error
+	}
+	if tx.RowsAffected != 1 {
+		return nil, nil
 	}
 
-	book := &openlibrary.Book{}
-	isbn13 := sql.NullString{}
-	isbn10 := sql.NullString{}
-	err = row.Scan(&book.OLID, &isbn13, &isbn10, &book.Title)
-	if err != nil {
-		if err == sql.ErrNoRows {
+	return &book, nil
+}
+
+func (d DB) readAuthor(olid string) (*Author, error) {
+	author := Author{}
+	tx := d.db.Find(&author, "olid = ?", olid)
+	if tx.Error != nil {
+		if errors.Is(tx.Error, gorm.ErrRecordNotFound) {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("db: error scanning book result: %w", err)
+		return nil, tx.Error
+	}
+	if tx.RowsAffected != 1 {
+		return nil, nil
 	}
 
-	if isbn13.Valid {
-		book.SetIsbn13(isbn13.String)
-	}
-
-	if isbn10.Valid {
-		book.SetIsbn10(isbn10.String)
-	}
-
-	return book, nil
+	return &author, nil
 }
 
-func (d DB) readAuthor(olid string) (*openlibrary.Author, *int64, error) {
-	stmt, err := d.db.Prepare(readAuthorByOLIDQuery)
+func (d DB) readAuthors(book *Book) ([]Author, error) {
+	authors := []Author{}
+	err := d.db.Model(book).Association("Authors").Find(&authors)
 	if err != nil {
-		return nil, nil, fmt.Errorf("db: error preparing statement: %w", err)
+		return nil, fmt.Errorf("db: error reading authors for book: %w", err)
 	}
-	defer stmt.Close()
-	row := stmt.QueryRow(olid)
-	if row.Err() != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil, nil
-		}
-		return nil, nil, fmt.Errorf("db: error querying authors: %w", err)
-	}
-	author := &openlibrary.Author{}
-	var authorId int64
-	err = row.Scan(&authorId, &author.OLID, &author.Name)
-	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil, nil
-		}
-		return nil, nil, fmt.Errorf("db: error scanning author result: %w", err)
-	}
-
-	return author, &authorId, nil
-}
-
-func (d DB) readBookAuthors(bookID int64) ([]openlibrary.Author, error) {
-	stmt, err := d.db.Prepare(readAuthorsByBookOLIDQuery)
-	if err != nil {
-		return nil, fmt.Errorf("db: error preparing statement: %w", err)
-	}
-	defer stmt.Close()
-	rows, err := stmt.Query(bookID)
-	if err != nil {
-		return nil, fmt.Errorf("db: error querying authors: %w", err)
-	}
-	authors := []openlibrary.Author{}
-
-	for {
-		if rows.Next() {
-			author := openlibrary.Author{}
-			err = rows.Scan(&author.OLID, &author.Name)
-			if err != nil {
-				return nil, fmt.Errorf("db: error scanning author result: %w", err)
-			}
-			authors = append(authors, author)
-		} else {
-			if rows.Err() != nil {
-				return nil, fmt.Errorf("db: error reading book authors: %w", err)
-			}
-			break
-		}
-	}
+	log.Printf("Found %d authors\n", len(authors))
 	return authors, nil
 }
