@@ -1,6 +1,7 @@
 package db
 
 import (
+	"io/ioutil"
 	"reflect"
 	"testing"
 
@@ -32,6 +33,7 @@ func TestInsertRecord(t *testing.T) {
 	}
 
 	db := openTestDatabase(t)
+	defer db.Close()
 
 	testCases := []struct {
 		name string
@@ -90,10 +92,71 @@ func TestInsertRecord(t *testing.T) {
 
 }
 
+func TestUpdateAuthorName(t *testing.T) {
+	authorA := openlibrary.Author{
+		OLID: "olid-authora",
+		Name: "Author A",
+	}
+
+	authorB := openlibrary.Author{
+		OLID: "olid-authorb",
+		Name: "Author B",
+	}
+
+	book := openlibrary.Book{
+		OLID:    "olid-booka",
+		Title:   "Book A",
+		Authors: []openlibrary.Author{authorA, authorB},
+	}
+
+	db := openTestDatabase(t)
+	defer db.Close()
+
+	err := db.InsertRecord(book)
+	require.NoError(t, err)
+
+	rows, err := db.UpdateAuthorName("Author A", "Author C")
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), rows)
+
+	books, err := db.AllBooks()
+	require.NoError(t, err)
+
+	require.Equal(t, 1, len(books))
+	assert.Equal(t, "Author C", books[0].Authors[0].Name)
+}
+
+func TestUpdateTitle(t *testing.T) {
+	book := openlibrary.Book{
+		OLID:    "olid-booka",
+		Title:   "Book A",
+		Authors: []openlibrary.Author{},
+	}
+
+	db := openTestDatabase(t)
+	defer db.Close()
+
+	err := db.InsertRecord(book)
+	require.NoError(t, err)
+
+	rows, err := db.UpdateTitle(openlibrary.Book{OLID: "olid-booka"}, "Book B")
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), rows)
+
+	books, err := db.AllBooks()
+	require.NoError(t, err)
+
+	require.Equal(t, 1, len(books))
+	assert.Equal(t, "Book B", books[0].Title)
+}
+
 func openTestDatabase(t *testing.T) *DB {
 	t.Helper()
 
-	db, err := OpenDatabase("file::memory:?cache=shared", false)
+	tempFile, err := ioutil.TempFile("", "*.sqlite3")
+	require.NoError(t, err)
+
+	db, err := OpenDatabase(tempFile.Name(), false)
 	require.NoError(t, err)
 
 	err = db.Migrate()

@@ -41,6 +41,14 @@ func OpenDatabase(databasePath string, verbose bool) (*DB, error) {
 	return &DB{db: db}, nil
 }
 
+func (d DB) Close() error {
+	db, err := d.db.DB()
+	if err != nil {
+		return err
+	}
+	return db.Close()
+}
+
 func (d DB) Migrate() error {
 	err := d.db.AutoMigrate(&Book{}, &Author{}, &BookAuthor{})
 	if err != nil {
@@ -98,14 +106,22 @@ func (d DB) InsertRecord(book openlibrary.Book) error {
 	return nil
 }
 
-func (d DB) UpdateTitle(book openlibrary.Book, title string) error {
+func (d DB) UpdateTitle(book openlibrary.Book, title string) (int64, error) {
 	tx := d.db.Model(&Book{}).Where("olid = ?", book.OLID).Update("title", title)
 	if tx.Error != nil {
-		return fmt.Errorf("db: error updating book title: %w", tx.Error)
+		return 0, fmt.Errorf("db: error updating book title: %w", tx.Error)
 	}
 	book.Title = title
 
-	return nil
+	return tx.RowsAffected, nil
+}
+
+func (d DB) UpdateAuthorName(oldName string, newName string) (int64, error) {
+	tx := d.db.Model(&Author{}).Where("name = ?", oldName).Update("name", newName)
+	if tx.Error != nil {
+		return 0, fmt.Errorf("db: error updating author name: %w", tx.Error)
+	}
+	return tx.RowsAffected, nil
 }
 
 func (d DB) AllBooks() ([]openlibrary.Book, error) {
@@ -188,6 +204,5 @@ func (d DB) readAuthors(book *Book) ([]Author, error) {
 	if err != nil {
 		return nil, fmt.Errorf("db: error reading authors for book: %w", err)
 	}
-	log.Printf("Found %d authors\n", len(authors))
 	return authors, nil
 }

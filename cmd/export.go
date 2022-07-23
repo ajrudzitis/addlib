@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"strings"
 
@@ -34,8 +33,6 @@ func run() {
 	books, err := database.AllBooks()
 	cobra.CheckErr(err)
 
-	log.Printf("Found %d books!\n", len(books))
-
 	_, err = outputFile.Write([]byte("title,author,url\n"))
 	cobra.CheckErr(err)
 
@@ -45,7 +42,7 @@ func run() {
 			authorNames[i] = author.Name
 		}
 
-		_, err = outputFile.Write([]byte(fmt.Sprintf(`"%s","%s","https://openlibrary.org%s"`, book.Title, strings.Join(authorNames, ","), book.OLID)))
+		_, err = outputFile.Write([]byte(fmt.Sprintf(`"%s","%s","https://openlibrary.org%s"`, book.Title, strings.Join(authorNames, ", "), book.OLID)))
 		cobra.CheckErr(err)
 		_, err = outputFile.Write([]byte("\n"))
 		cobra.CheckErr(err)
