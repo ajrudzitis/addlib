@@ -124,6 +124,14 @@ func (d DB) UpdateAuthorName(oldName string, newName string) (int64, error) {
 	return tx.RowsAffected, nil
 }
 
+func (d DB) DeleteBook(book openlibrary.Book) (int64, error) {
+	tx := d.db.Model(&Book{}).Where("olid = ?", book.OLID).Delete(&Book{})
+	if tx.Error != nil {
+		return 0, fmt.Errorf("db: error deleting book: %w", tx.Error)
+	}
+	return tx.RowsAffected, nil
+}
+
 func (d DB) AllBooks() ([]openlibrary.Book, error) {
 	ormBooks := []Book{}
 	tx := d.db.Model(&Book{}).Preload("Authors").Find(&ormBooks)

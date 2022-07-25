@@ -150,6 +150,45 @@ func TestUpdateTitle(t *testing.T) {
 	assert.Equal(t, "Book B", books[0].Title)
 }
 
+func TestDeleteBook(t *testing.T) {
+	authorA := openlibrary.Author{
+		OLID: "olid-authora",
+		Name: "Author A",
+	}
+
+	bookA := openlibrary.Book{
+		OLID:    "olid-booka",
+		Title:   "Book A",
+		Authors: []openlibrary.Author{authorA},
+	}
+
+	bookB := openlibrary.Book{
+		OLID:    "olid-bookb",
+		Title:   "Book B",
+		Authors: []openlibrary.Author{authorA},
+	}
+
+	db := openTestDatabase(t)
+	defer db.Close()
+
+	err := db.InsertRecord(bookA)
+	require.NoError(t, err)
+
+	err = db.InsertRecord(bookB)
+	require.NoError(t, err)
+
+	rows, err := db.DeleteBook(bookA)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), rows)
+
+	books, err := db.AllBooks()
+	require.NoError(t, err)
+
+	require.Equal(t, 1, len(books))
+	assert.Equal(t, "Book B", books[0].Title)
+	assert.Equal(t, "Author A", books[0].Authors[0].Name)
+}
+
 func openTestDatabase(t *testing.T) *DB {
 	t.Helper()
 
